@@ -48,6 +48,8 @@ void register_test(struct test test);
 
 void run(struct suite* tests, char* test_label);
 
+int testify_run();
+
 #ifdef __cplusplus
 }
 #endif
