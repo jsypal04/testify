@@ -7,7 +7,7 @@ PATCH = 0
 
 BUILD_DIR = build
 
-LIB_NAME      = libcalenter.so
+LIB_NAME      = libtestify.so
 LIB_REAL_NAME = $(LIB_NAME).$(MAJOR).$(MINOR).$(PATCH)
 SONAME        = $(LIB_NAME).$(MAJOR)
 
