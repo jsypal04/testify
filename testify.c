@@ -1,14 +1,21 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #include "testify.h"
 
 
-#define TEST_RUN_LOG "/tmp/test_run.log"
+#define TEST_RUN_LOG "/tmp/testify_run.log"
+
+struct output_fds {
+    int stdout_fd;
+    int stderr_fd;
+};
 
 struct suite test_suite = {0};
 
@@ -32,57 +39,139 @@ void register_test(struct test test) {
     test_suite.len++;
 }
 
-int redirect_stdout() {
-    int original_fd = dup(STDOUT_FILENO);
+struct output_fds redirect_output() {
+    fflush(stdout);
+    fflush(stderr);
+    int original_stdout = dup(STDOUT_FILENO);
+    int original_stderr = dup(STDERR_FILENO);
     if (freopen(TEST_RUN_LOG, "a", stdout) == NULL) {
         perror("Failed to redirect stdout\n");
         _exit(EXIT_FAILURE);
     }
+    if (freopen(TEST_RUN_LOG, "a", stderr) == NULL) {
+        perror("Failed to redirect stderr\n");
+        _exit(EXIT_FAILURE);
+    }
 
-    return original_fd;
+    struct output_fds fds = {
+        .stdout_fd = original_stdout,
+        .stderr_fd = original_stderr
+    };
+
+    return fds;
 }
 
-void restore_stdout(int original_fd) {
+void restore_output(struct output_fds fds) {
     fflush(stdout);
-    dup2(original_fd, STDOUT_FILENO);
-    close(original_fd);
+    fflush(stderr);
+    dup2(fds.stdout_fd, STDOUT_FILENO);
+    dup2(fds.stderr_fd, STDERR_FILENO);
+    close(fds.stdout_fd);
+    close(fds.stderr_fd);
 }
 
+void restore_captured_output(char* label) {
+    printf("\n----- %s: Captured STDIO -----\n", label);
 
-void run(struct suite* tests, char* test_label) {
+    FILE* output = fopen(TEST_RUN_LOG, "r");
+    if (output == NULL) return;
+
+    size_t line_n = 0;
+    int32_t read;
+    char* line = NULL;
+    read = getline(&line, &line_n, output);
+
+    while (read >= 0 && strstr(line, label) == NULL) {
+        read = getline(&line, &line_n, output);
+    }
+    if (read < 0) goto cleanup;
+
+    read = getline(&line, &line_n, output);
+    while (read >= 0 && strstr(line, "END_TEST") == NULL) {
+        printf("%s", line);
+        read = getline(&line, &line_n, output);
+    }
+
+    cleanup:
+    free(line);
+    fclose(output);
+}
+
+void run(struct suite* tests, char* module, char* test_label) {
+    if (tests->tests == NULL) return;
+
     for (size_t i = 0; i < tests->len; i++) {
         struct test test = tests->tests[i];
 
-        if (test_label != NULL && strcmp(test_label, test.label) != 0)
+        if (module != NULL && strcmp(module, test.module) != 0) {
             continue;
+        }
+        if (test_label != NULL && strcmp(test_label, test.label) != 0) {
+            continue;
+        }
 
         printf("Running %s:%s... ", test.module, test.label);
-
-        int fd = redirect_stdout();
+        struct output_fds fds = redirect_output();
         printf("BEGIN_TEST:%s\n", test.label);
-        test.result = test.run();
+        fflush(stdout);
+        fflush(stderr);
+
+        int pid = fork();
+        if (pid == 0) {
+            test.result = test.run();
+            _exit(test.result);
+        } else if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+            test.result = status;
+        } else {
+            printf("\nEND_TEST\n");
+            restore_output(fds);
+            printf("Failed to fork testing process\n");
+            continue;
+        }
+
         printf("\nEND_TEST\n");
-        restore_stdout(fd);
+        restore_output(fds);
 
         if (test.result != 0) {
             printf("\033[31mFailed\033[0m\n");
+            tests->tests[i] = test;
             continue;
         }
 
         printf("\e[32mPassed\e[0m\n");
+        tests->tests[i] = test;
     }
 }
 
-int testify_run() {
+int testify_run(int argc, char** argv) {
     // Clear the test run log
-    FILE* fd = fopen("logs/test_run.log", "w");
+    FILE* fd = fopen(TEST_RUN_LOG, "w");
     fclose(fd);
 
     printf("==================\n");
     printf("Running Test Suite\n");
     printf("==================\n\n");
 
-    run(&test_suite, NULL);
+    if (argc == 3) {
+        run(&test_suite, argv[1], argv[2]);
+    } else if (argc == 2 && strstr(argv[1], ".c") != NULL) {
+        run(&test_suite, argv[1], NULL);
+    } else if (argc == 2 && strstr(argv[1], ".c") == NULL) {
+        run(&test_suite, NULL, argv[1]);
+    } else if (argc == 1) {
+        run(&test_suite, NULL, NULL);
+    } else {
+        printf("Usage: ./test-binary [<file>] [<test>]\n");
+        return EXIT_FAILURE;
+    }
+
+    for (size_t i = 0; i < test_suite.len; i++) {
+        struct test test = test_suite.tests[i];
+        if (test.result == 0) continue;
+        restore_captured_output(test.label);
+    }
 
     return 0;
 }

@@ -46,9 +46,9 @@ struct suite {
 
 void register_test(struct test test);
 
-void run(struct suite* tests, char* test_label);
+void run(struct suite* tests, char* module, char* test_label);
 
-int testify_run();
+int testify_run(int argc, char** argv);
 
 #ifdef __cplusplus
 }
