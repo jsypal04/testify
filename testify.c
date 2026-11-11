@@ -98,39 +98,49 @@ void restore_captured_output(char* label) {
 }
 
 void run(struct suite* tests, char* module, char* test_label) {
+    struct output_fds fds;
+
     if (tests->tests == NULL) return;
 
     for (size_t i = 0; i < tests->len; i++) {
         struct test test = tests->tests[i];
 
         if (module != NULL && strcmp(module, test.module) != 0) {
+            tests->tests[i].skipped = 1;
             continue;
         }
         if (test_label != NULL && strcmp(test_label, test.label) != 0) {
+            tests->tests[i].skipped = 1;
             continue;
         }
 
-        printf("Running %s:%s... ", test.module, test.label);
-        struct output_fds fds = redirect_output();
+        printf("%s:%s... ", test.module, test.label);
+        fds = redirect_output();
         printf("BEGIN_TEST:%s\n", test.label);
         fflush(stdout);
         fflush(stderr);
+        restore_output(fds);
 
         int pid = fork();
         if (pid == 0) {
+            fds = redirect_output();
             test.result = test.run();
-            _exit(test.result);
+            exit(test.result);
         } else if (pid > 0) {
             int status;
             waitpid(pid, &status, 0);
             test.result = status;
         } else {
+            fds = redirect_output();
             printf("\nEND_TEST\n");
             restore_output(fds);
             printf("Failed to fork testing process\n");
+            test.skipped = 1;
+            tests->tests[i] = test;
             continue;
         }
 
+        fds = redirect_output();
         printf("\nEND_TEST\n");
         restore_output(fds);
 
@@ -150,9 +160,7 @@ int testify_run(int argc, char** argv) {
     FILE* fd = fopen(TEST_RUN_LOG, "w");
     fclose(fd);
 
-    printf("==================\n");
-    printf("Running Test Suite\n");
-    printf("==================\n\n");
+    printf("===== Running Test Suite =====\n\n");
 
     if (argc == 3) {
         run(&test_suite, argv[1], argv[2]);
@@ -167,11 +175,31 @@ int testify_run(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    uint32_t passed  = 0;
+    uint32_t failed  = 0;
+    uint32_t skipped = 0;
+
     for (size_t i = 0; i < test_suite.len; i++) {
         struct test test = test_suite.tests[i];
-        if (test.result == 0) continue;
+        if (test.skipped) {
+            skipped++;
+            continue;
+        }
+
+        if (test.result == PASSED) {
+            passed++;
+            continue;
+        }
+
+        failed++;
         restore_captured_output(test.label);
     }
 
-    return 0;
+    printf("\n===== Test Results =====\n");
+    printf("Passed: %d\n", passed);
+    printf("Failed: %d\n", failed);
+    printf("Skipped: %d\n", skipped);
+    printf("Total: %zu\n", test_suite.len);
+
+    return failed;
 }

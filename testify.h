@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -12,8 +13,8 @@ extern "C" {
 #include <strings.h>
 
 
-#define PASSED 0
-#define FAILED 1
+#define PASSED   0
+#define FAILED   1
 
 #define TEST(name) \
     static int name(void); \
@@ -23,19 +24,20 @@ extern "C" {
             .label  = #name, \
             .module = __FILE__, \
             .run    = name, \
-            .result = 0 \
+            .result = 0, \
+            .skipped = 0 \
         }; \
         register_test(__test); \
     } \
     static int name(void)
 
-
-
+#define MAX_LABEL_LEN 256
 struct test {
-    char label[256];
-    char module[256];
+    char label[MAX_LABEL_LEN];
+    char module[MAX_LABEL_LEN];
     int (*run)();
     int result;
+    uint8_t skipped;
 };
 
 struct suite {
